@@ -1,18 +1,13 @@
 from operator import itemgetter
-from typing import Any, List, Tuple
-from langchain_ollama import ChatOllama
+from typing import List, Tuple
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.runnables import (
-    RunnablePassthrough, RunnableParallel, Runnable, RunnableLambda,
-)
+from langchain_core.runnables import RunnableParallel
 from langchain_core.output_parsers.string import StrOutputParser
-from llm_service.vector_store import vector_store
-from langchain_community.chat_models import ChatYandexGPT
 from llm_service.base_ai import chat
 from llm_service.history import history_aware_retriever
-from langchain.chains.conversational_retrieval.base import CHAT_TURN_TYPE
 from pydantic import Field, BaseModel
+from langchain_core.prompts import MessagesPlaceholder
+from langchain_core.messages import trim_messages
 
 EMBEDDING_MODEL = "BAAI/bge-m3"
 CHAT_MODEL = "krith/qwen2.5-14b-instruct:IQ4_XS"
@@ -43,26 +38,10 @@ You are a high-class chatbot. Your task is to provide accurate answers **only** 
 A lot depends on this answer — please check it carefully!
 """
 
-from langchain_core.prompts import MessagesPlaceholder
-
 main_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", SYSTEM_TEMPLATE),
         MessagesPlaceholder("chat_history"),
-        ("human", "{input}"),
-    ]
-)
-
-TRANSFORM_PROMPT = """Your task is create search query from user input. 
-**Rules to follow**:
-- Your response should contain only the text that is expected in the contents of the documents.
-- Remove question words and other not relevant words.
-- Always triple-check if your answer is accurate
-"""
-
-transform_question_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system",  TRANSFORM_PROMPT),
         ("human", "{input}"),
     ]
 )
@@ -78,21 +57,19 @@ chat_chain =(
     | StrOutputParser()
 )
 
-transform_question_chain = transform_question_prompt | chat | StrOutputParser()
-# 
-# documents_retrieval_chain = (
-#     itemgetter("question") 
-#     | transform_question_chain
-#     | history_aware_retriever
-# )
-# 
 def get_metainfo(x):
     if len(x['documents']) > 0:
         return x['documents'][0].metadata
     return {}
 
-from langchain_core.messages import BaseMessage
-
+trimmer = trim_messages(
+    max_tokens=10,
+    token_counter=len,
+    strategy="last",
+    start_on="human",
+    include_system=True,
+)
+    
 class InputType(BaseModel):
     input: str
     chat_history: List[Tuple[str, str]] = Field(default_factory=list)    
@@ -101,13 +78,16 @@ megachain = (
     RunnableParallel(
         question=itemgetter("input"),
         input=itemgetter("input"),
-        chat_history=itemgetter("chat_history"),
-        documents=history_aware_retriever,
+        chat_history=itemgetter("chat_history") | trimmer,
     ).with_types(
         input_type=InputType
-    ) |
-    {
+    ) | {
+        "documents": history_aware_retriever,
+        "question": itemgetter("question"),
+        "input": itemgetter("input"),
+        "chat_history": itemgetter("chat_history"),
+    } | {
         "response": chat_chain,
         "metainfo": get_metainfo,
     }
-)
+) 
