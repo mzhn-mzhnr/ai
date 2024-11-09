@@ -1,5 +1,5 @@
 from operator import itemgetter
-from typing import Any
+from typing import Any, List, Tuple
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -9,18 +9,13 @@ from langchain_core.runnables import (
 from langchain_core.output_parsers.string import StrOutputParser
 from llm_service.vector_store import vector_store
 from langchain_community.chat_models import ChatYandexGPT
+from llm_service.base_ai import chat
+from llm_service.history import history_aware_retriever
+from langchain.chains.conversational_retrieval.base import CHAT_TURN_TYPE
+from pydantic import Field, BaseModel
 
 EMBEDDING_MODEL = "BAAI/bge-m3"
 CHAT_MODEL = "krith/qwen2.5-14b-instruct:IQ4_XS"
-
-
-retriever = vector_store.as_retriever(
-    search_type="mmr", 
-    search_kwargs={
-        "k": 5, 
-        "fetch_k": 30
-    }
-)
 
 def format_docs(docs):
     return "\n\n========\n\n".join(
@@ -48,9 +43,12 @@ You are a high-class chatbot. Your task is to provide accurate answers **only** 
 A lot depends on this answer — please check it carefully!
 """
 
+from langchain_core.prompts import MessagesPlaceholder
+
 main_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", SYSTEM_TEMPLATE),
+        MessagesPlaceholder("chat_history"),
         ("human", "{input}"),
     ]
 )
@@ -69,16 +67,11 @@ transform_question_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-
-chat = ChatYandexGPT(
-    model_uri="gpt://b1gjp5vama10h4due384/yandexgpt/rc",
-    temperature=0.8
-)
-
 chat_chain =(
     {
         "context": lambda x: format_docs(x['documents']),
-        "input": itemgetter("input")
+        "chat_history": itemgetter("chat_history"),
+        "input": itemgetter("input"),
     } 
     | main_prompt 
     | chat 
@@ -86,47 +79,35 @@ chat_chain =(
 )
 
 transform_question_chain = transform_question_prompt | chat | StrOutputParser()
-
-documents_retrieval_chain = (
-    itemgetter("input") 
-    | transform_question_chain
-    | retriever
-)
-
+# 
+# documents_retrieval_chain = (
+#     itemgetter("question") 
+#     | transform_question_chain
+#     | history_aware_retriever
+# )
+# 
 def get_metainfo(x):
     if len(x['documents']) > 0:
         return x['documents'][0].metadata
     return {}
-    
+
+from langchain_core.messages import BaseMessage
+
+class InputType(BaseModel):
+    input: str
+    chat_history: List[Tuple[str, str]] = Field(default_factory=list)    
+
 megachain = (
     RunnableParallel(
-        input=RunnablePassthrough()
+        question=itemgetter("input"),
+        input=itemgetter("input"),
+        chat_history=itemgetter("chat_history"),
+        documents=history_aware_retriever,
     ).with_types(
-        input_type=str
+        input_type=InputType
     ) |
-    {
-        "input": itemgetter("input"),
-        "documents": documents_retrieval_chain,
-    } |
     {
         "response": chat_chain,
         "metainfo": get_metainfo,
     }
 )
-
-######
-## WORKS
-##
-# chat_chain = RunnableParallel(
-#     context=lambda x: format_docs(x['documents']),
-#     input=itemgetter("input")
-# ) | main_prompt | chat | StrOutputParser()
-# 
-# megachain = RunnableParallel(
-#     documents=retriever,
-#     input=RunnablePassthrough()
-# ) | RunnableParallel(
-#     response=chat_chain,
-#     metainfo=lambda x: x['documents'][0].metadata
-# )
-# 
