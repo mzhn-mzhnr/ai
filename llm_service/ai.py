@@ -1,9 +1,10 @@
 from operator import itemgetter
+from typing import Any
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import (
-    RunnablePassthrough, RunnableParallel, Runnable,
+    RunnablePassthrough, RunnableParallel, Runnable, RunnableLambda,
 )
 from langchain_core.output_parsers.string import StrOutputParser
 from llm_service.vector_store import vector_store
@@ -16,7 +17,7 @@ CHAT_MODEL = "krith/qwen2.5-14b-instruct:IQ4_XS"
 retriever = vector_store.as_retriever(
     search_type="mmr", 
     search_kwargs={
-        "k": 3, 
+        "k": 5, 
         "fetch_k": 30
     }
 )
@@ -54,47 +55,64 @@ main_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-chat = ChatYandexGPT(
-    model_uri="gpt://b1gjp5vama10h4due384/yandexgpt/rc",
-    temperature=0.8
-)
-
-chat_chain = RunnableParallel(
-    context=lambda x: format_docs(x['documents']),
-    input=itemgetter("input")
-) | main_prompt | chat | StrOutputParser()
+TRANSFORM_PROMPT = """Your task is create search query from user input. 
+**Rules to follow**:
+- Your response should contain only the text that is expected in the contents of the documents.
+- Remove question words and other not relevant words.
+- Always triple-check if your answer is accurate
+"""
 
 transform_question_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", "Please rewrite the following question to optimize it for information retrieval via vector search. Answer only with new question"),
+        ("system",  TRANSFORM_PROMPT),
         ("human", "{input}"),
     ]
 )
 
 
+chat = ChatYandexGPT(
+    model_uri="gpt://b1gjp5vama10h4due384/yandexgpt/rc",
+    temperature=0.8
+)
 
-input_runnable = RunnablePassthrough()
-documents_runnable = (
-    itemgetter("input") 
-    | transform_question_prompt 
+chat_chain =(
+    {
+        "context": lambda x: format_docs(x['documents']),
+        "input": itemgetter("input")
+    } 
+    | main_prompt 
     | chat 
+    | StrOutputParser()
+)
+
+transform_question_chain = transform_question_prompt | chat | StrOutputParser()
+
+documents_retrieval_chain = (
+    itemgetter("input") 
+    | transform_question_chain
     | retriever
 )
 
-parallel_input = RunnableParallel(input=input_runnable)
-parallel_documents = RunnableParallel(documents=documents_runnable)
-
-combined_parallel = parallel_input | parallel_documents
-
-megachain = combined_parallel
-
-# 
-# chat = ChatOllama(
-#     model=CHAT_MODEL,
-#     temperature=0.05,
-#     num_predict=256,
-# )
-# 
+def get_metainfo(x):
+    if len(x['documents']) > 0:
+        return x['documents'][0].metadata
+    return {}
+    
+megachain = (
+    RunnableParallel(
+        input=RunnablePassthrough()
+    ).with_types(
+        input_type=str
+    ) |
+    {
+        "input": itemgetter("input"),
+        "documents": documents_retrieval_chain,
+    } |
+    {
+        "response": chat_chain,
+        "metainfo": get_metainfo,
+    }
+)
 
 ######
 ## WORKS
