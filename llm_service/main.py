@@ -5,7 +5,7 @@ dotenv.load_dotenv()
 from fastapi import FastAPI
 from langserve import add_routes
 
-from ai_next import megachain
+from llm_service.ai import megachain
 
 app = FastAPI()
 
