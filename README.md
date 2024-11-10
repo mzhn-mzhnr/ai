@@ -7,7 +7,6 @@
 ### Необходимое окружение
 
 - **ChromaDB**
-- [RAG-сервис](https://github.com/mzhn-mzhnr/ai)
 
 ### Стек:
 
