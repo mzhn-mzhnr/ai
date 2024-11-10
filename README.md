@@ -46,29 +46,6 @@ vector_store_manager/
 - Создание экземпляра FastAPI приложения.
 - Добавление маршрутов для чат-бота через `langserve`.
 
-**Пример содержимого:**
-```python
-import dotenv
-
-# Загрузка переменных окружения из файла .env
-dotenv.load_dotenv()
-
-from fastapi import FastAPI
-from langserve import add_routes
-
-from llm_service.ai import megachain
-
-# Создание экземпляра приложения FastAPI
-app = FastAPI()
-
-# Добавление маршрутов для чат-бота с использованием megachain
-add_routes(
-    app,
-    megachain,
-    path="/chat",  # Устанавливаем путь для доступа к чат-боту
-)
-```
-
 #### `llm_service/ai.py`
 
 Файл отвечает за настройку цепочек LangChain, включая создание основных цепочек обработки запросов, интеграцию с моделями и ретриверами.
