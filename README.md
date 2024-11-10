@@ -27,9 +27,8 @@
 ```
 vector_store_manager/
 ├── .env
-├── main.py
 ├── llm_service/
-│   ├── __init__.py
+|   ├── main.py
 │   ├── ai.py
 │   ├── base_ai.py
 │   ├── history.py
@@ -158,6 +157,7 @@ cp example.env .env
     ```
 
 3. **Установка зависимостей:**
+    Если необходима работа на GPU, добавьте соответствующий `--extra-index-url https://download.pytorch.org/whl/`
     ```bash
     pip install -r requirements.txt
     ```
